@@ -1,0 +1,499 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/adelanto_church_app/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN   // Platform administrator - can access ALL organizations
+  ADMIN         // Organization administrator - full access to their church only
+  EDITOR        // Can create/edit programs within their organization
+  VIEWER        // Read-only access to their organization
+}
+
+enum SubscriptionStatus {
+  PENDING_VERIFICATION  // Email not yet verified, trial not started
+  TRIAL         // Free trial period (starts after email verification)
+  ACTIVE        // Paid and active subscription
+  PAST_DUE      // Payment failed, grace period
+  CANCELED      // Subscription canceled
+  EXPIRED       // Trial or subscription expired
+}
+
+enum ProgramType {
+  FRIDAY
+  WEDNESDAY
+  SABBATH
+  YOUTH
+}
+
+enum LanguageMode {
+  BILINGUAL
+  EN
+  ES
+}
+
+enum ProgramBlock {
+  MAIN
+  SABBATH_SCHOOL
+  DIVINE_WORSHIP
+}
+
+enum TemplateScope {
+  GLOBAL          // Available to ALL organizations (Christian base templates)
+  DENOMINATION    // Available to organizations of a specific denomination (e.g., SDA, Baptist)
+  ORG_CUSTOM      // Custom template created by and for a specific organization
+}
+
+enum Denomination {
+  CHRISTIAN       // Generic Christian (all denominations)
+  SDA             // Seventh-day Adventist
+  BAPTIST         // Baptist
+  METHODIST       // Methodist
+  PRESBYTERIAN    // Presbyterian
+  LUTHERAN        // Lutheran
+  PENTECOSTAL     // Pentecostal
+  CATHOLIC        // Catholic
+  NON_DENOMINATIONAL // Non-denominational
+  OTHER           // Other Christian tradition (user-specified)
+}
+
+// ============================================================================
+// MINISTERIAL WORSHIP PLANNER - Multi-Tenant SaaS Architecture
+// 
+// SCOPE: Multi-organization SaaS platform for churches
+// - Each organization (church) has isolated data
+// - Users belong to ONE organization
+// - Programs, Series, Ceremonies belong to ONE organization
+// - Global hymnal is SHARED and READ-ONLY across all organizations
+// - SUPER_ADMIN can access all organizations
+//
+// SUBSCRIPTION MODEL: Stripe-ready with trial periods
+// ============================================================================
+
+model Organization {
+  id          String    @id @default(cuid())
+  slug        String    @unique                   // URL-friendly identifier (e.g., "adelanto-church")
+  
+  // ============ IDENTITY ============
+  nameEn      String    @map("name_en")           // English name
+  nameEs      String?   @map("name_es")           // Spanish name (optional for non-bilingual)
+  denomination String?                             // e.g., "Seventh-day Adventist", "Baptist", "OTHER"
+  customDenomination String? @map("custom_denomination") // User-specified tradition when denomination = OTHER
+  mottoEn     String?   @map("motto_en")          // English motto/slogan
+  mottoEs     String?   @map("motto_es")          // Spanish motto/slogan
+  primaryLanguage String @default("es") @map("primary_language") // "en", "es", "both"
+  
+  // ============ ADDRESS ============
+  addressLine1  String?   @map("address_line_1")
+  city          String?
+  state         String?
+  zip           String?
+  country       String    @default("USA")
+  timezone      String    @default("America/Los_Angeles")
+  
+  // ============ BRANDING ============
+  logoPath      String?   @map("logo_path")       // File path or URL to logo
+  logoSvg       String?   @map("logo_svg")        // Optional: inline SVG text
+  primaryColor  String?   @map("primary_color")   // Hex color for branding
+  
+  // ============ LEADERSHIP ============
+  seniorPastor      String?   @map("senior_pastor")
+  associatePastor   String?   @map("associate_pastor")
+  
+  // ============ CONTACT/SOCIAL ============
+  email         String?                           // Organization contact email
+  phone         String?                           // Organization phone
+  websiteUrl    String?   @map("website_url")
+  facebookUrl   String?   @map("facebook_url")
+  
+  // ============ DEFAULT VERSES (Fallback for Programs) ============
+  defaultCoverVerseEn         String?   @map("default_cover_verse_en")
+  defaultCoverVerseEs         String?   @map("default_cover_verse_es")
+  defaultAnnouncementVerseEn  String?   @map("default_announcement_verse_en")
+  defaultAnnouncementVerseEs  String?   @map("default_announcement_verse_es")
+  
+  // ============ WELCOME MESSAGE ============
+  welcomeMessageEn  String?   @map("welcome_message_en")
+  welcomeMessageEs  String?   @map("welcome_message_es")
+  
+  // ============ SERVICE SCHEDULE DEFAULTS ============
+  sabbathSchoolTime     String?   @map("sabbath_school_time")      // e.g., "9:30 AM"
+  divineServiceTime     String?   @map("divine_service_time")      // e.g., "11:00 AM"
+  youthTime             String?   @map("youth_time")               // e.g., "5:00 PM"
+  wednesdayTime         String?   @map("wednesday_time")           // e.g., "7:00 PM"
+  fridayTime            String?   @map("friday_time")              // e.g., "7:00 PM"
+  foodDistributionTime  String?   @map("food_distribution_time")   // e.g., "First Sunday 10:00 AM"
+  
+  // ============ SUBSCRIPTION (Stripe-Ready) ============
+  subscriptionStatus  SubscriptionStatus @default(TRIAL) @map("subscription_status")
+  trialEndDate        DateTime?          @map("trial_end_date")
+  subscriptionEndDate DateTime?          @map("subscription_end_date")
+  stripeCustomerId    String?            @unique @map("stripe_customer_id")
+  stripeSubscriptionId String?           @map("stripe_subscription_id")
+  planTier            String             @default("free") @map("plan_tier")  // "free", "basic", "pro"
+  
+  // ============ SYSTEM FIELDS ============
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  
+  // For informational display only (optional hierarchy info)
+  conference  String?   // e.g., "Southeastern California Conference"
+  union       String?   // e.g., "Pacific Union Conference"
+  
+  // Relations
+  users       User[]
+  programs    Program[]
+  series      SermonSeries[]
+  localHymnTags LocalHymnTag[]
+  settings    OrganizationSetting[]
+  monthlyEmphasis MonthlyEmphasis[]
+  ceremonyPrograms CeremonyProgram[]
+  ceremonyTemplates CeremonyTemplate[]  // ORG_CUSTOM templates owned by this org
+  
+  // DEPRECATED: Will be removed in future migration
+  localHymnExtensions LocalHymnExtension[]
+
+  @@index([subscriptionStatus])
+  @@index([slug])
+  @@map("organizations")
+}
+
+// Organization-specific settings (church-level configuration)
+model OrganizationSetting {
+  id              String       @id @default(cuid())
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key             String
+  valueEn         String       @map("value_en")
+  valueEs         String       @map("value_es")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, key])
+  @@map("organization_settings")
+}
+
+// Local hymn tags/metadata (organization-specific additions to global hymnal)
+// NOTE: This does NOT alter core hymn numbers, titles, or lyrics
+// Churches can only ADD local tags, notes, and usage preferences
+model LocalHymnTag {
+  id              String       @id @default(cuid())
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  hymnId          Int          @map("hymn_id")
+  hymn            HymnPair     @relation(fields: [hymnId], references: [id], onDelete: Cascade)
+  
+  // Local metadata (does not override global hymn data)
+  localNotes      String?      @map("local_notes")     // Church-specific notes
+  localTags       String[]     @default([])           // Custom tags for this church
+  isFavorite      Boolean      @default(false) @map("is_favorite")
+  usageCount      Int          @default(0) @map("usage_count")
+  lastUsedAt      DateTime?    @map("last_used_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, hymnId])
+  @@index([hymnId])
+  @@map("local_hymn_tags")
+}
+
+// DEPRECATED: Keeping for migration, will be removed in future
+// Local hymn extensions (organization-specific additions to global hymnal)
+model LocalHymnExtension {
+  id              String       @id @default(cuid())
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  numberLocal     Int          @map("number_local")
+  titleEs         String       @map("title_es")
+  titleEn         String?      @map("title_en")
+  lyricsEs        String?      @map("lyrics_es")
+  lyricsEn        String?      @map("lyrics_en")
+  category        String?
+  isApproved      Boolean      @default(false) @map("is_approved")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  @@unique([organizationId, numberLocal])
+  @@map("local_hymn_extensions")
+}
+
+model User {
+  id              String        @id @default(uuid())
+  email           String        @unique
+  password        String
+  name            String?
+  role            Role          @default(VIEWER)
+  
+  // Organization membership (required for non-SUPER_ADMIN users)
+  // SUPER_ADMIN users may have null organizationId (platform-wide access)
+  organizationId  String?       @map("organization_id")
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  
+  // Account status
+  isActive        Boolean       @default(true) @map("is_active")
+  emailVerified   DateTime?     @map("email_verified")
+  lastLoginAt     DateTime?     @map("last_login_at")
+  
+  // Email verification tokens
+  emailVerificationToken   String?   @unique @map("email_verification_token")
+  emailVerificationExpires DateTime? @map("email_verification_expires")
+  
+  // Password reset tokens
+  resetToken        String?   @unique @map("reset_token")
+  resetTokenExpiry  DateTime? @map("reset_token_expiry")
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // Relations
+  programs        Program[]
+  ceremonyPrograms CeremonyProgram[]
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([emailVerificationToken])
+}
+
+// GLOBAL HYMNAL - Shared across ALL organizations (read-only baseline)
+// Churches CANNOT alter: id, numberEs, numberEn, titleEs, titleEn, lyrics
+// Global metadata fields are maintained by system admins only
+model HymnPair {
+  id                Int      @id @default(autoincrement())
+  numberEs          Int      @unique
+  titleEs           String
+  numberEn          Int?
+  titleEn           String?
+  lyricsEn          String?
+  lyricsEs          String?
+  category          String?
+  theme             String?
+  seasonTag         String?
+  keywords          String[] @default([])
+  worshipSection    String?
+  metadataVerified  Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  programItems      ProgramItem[]
+  hymnHistory       ProgramHymnHistory[]
+  localTags         LocalHymnTag[]  // Organization-specific tags (does not modify hymn)
+
+  @@index([numberEn])
+  @@index([titleEs])
+  @@index([titleEn])
+  @@index([category])
+  @@map("hymn_pairs")
+}
+
+model ProgramHymnHistory {
+  id        Int      @id @default(autoincrement())
+  hymnId    Int
+  hymn      HymnPair @relation(fields: [hymnId], references: [id], onDelete: Cascade)
+  programId String
+  program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  dateUsed  DateTime @default(now())
+
+  @@index([hymnId])
+  @@index([programId])
+  @@index([dateUsed])
+  @@map("program_hymn_history")
+}
+
+model SermonSeries {
+  id              String        @id @default(cuid())
+  title           String
+  titleEs         String?       @map("title_es")
+  theme           String
+  totalWeeks      Int           @map("total_weeks")
+  startDate       DateTime      @map("start_date") @db.Date
+  organizationId  String        @map("organization_id")  // Required - belongs to one organization
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  programs        Program[]
+
+  @@index([organizationId])
+  @@map("sermon_series")
+}
+
+// ============================================================================
+// PHASE 6: MONTHLY EMPHASIS ENGINE
+// Aligned with Conference themes and annual emphasis calendar
+// ============================================================================
+model MonthlyEmphasis {
+  id              String        @id @default(cuid())
+  organizationId  String        @map("organization_id")
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  month           Int           // 1–12
+  year            Int           // e.g., 2026
+  emphasisKey     String        @map("emphasis_key")  // e.g., EVANGELISM, STEWARDSHIP
+  title           String?       // Optional custom title
+  titleEs         String?       @map("title_es")      // Optional Spanish title
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@unique([organizationId, month, year])
+  @@index([organizationId])
+  @@index([year, month])
+  @@map("monthly_emphasis")
+}
+
+model Program {
+  id                    String        @id @default(uuid())
+  date                  DateTime      @db.Date
+  type                  ProgramType
+  languageMode          LanguageMode  @default(BILINGUAL)
+  theme                 String?
+  specialTheme          String?       @map("special_theme")
+  isSpecialEvent        Boolean       @default(false) @map("is_special_event")
+  seriesId              String?       @map("series_id")
+  series                SermonSeries? @relation(fields: [seriesId], references: [id])
+  seriesTitle           String?       @map("series_title")
+  seriesWeek            Int?          @map("series_week")
+  seriesTotal           Int?          @map("series_total")
+  
+  // Multi-tenant isolation - Required
+  organizationId        String        @map("organization_id")
+  organization          Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdById           String
+  createdBy             User          @relation(fields: [createdById], references: [id])
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  items                 ProgramItem[]
+  coverVerseEn          String?       @map("cover_verse_en")
+  coverVerseEs          String?       @map("cover_verse_es")
+  coverImageUrl         String?       @map("cover_image_url")    // URL for cover photo
+  announcementVerseEn   String?       @map("announcement_verse_en")
+  announcementVerseEs   String?       @map("announcement_verse_es")
+  announcements         String?       @map("announcements")      // Weekly announcements text
+  websiteUrl            String?       @map("website_url")
+  facebookUrl           String?       @map("facebook_url")
+  // Phase 7C: Biblical-Doctrinal Intelligence
+  mainScriptureReference String?      @map("main_scripture_reference")  // e.g. "Daniel 2:44"
+  mainScriptureBook      String?      @map("main_scripture_book")       // e.g. "Daniel"
+  scriptureCategory      String?      @map("scripture_category")        // LAW, PROPHETS, GOSPELS, etc.
+  testament              String?      @map("testament")                 // OT | NT
+  hymnHistory           ProgramHymnHistory[]
+
+  @@index([seriesId])
+  @@index([organizationId])
+  @@index([date])
+  @@map("programs")
+}
+
+model ProgramItem {
+  id            String       @id @default(uuid())
+  programId     String
+  program       Program      @relation(fields: [programId], references: [id], onDelete: Cascade)
+  block         ProgramBlock @default(MAIN)
+  order         Int
+  sectionKey    String
+  textEn        String?
+  textEs        String?
+  hymnPairId    Int?
+  hymnPair      HymnPair?    @relation(fields: [hymnPairId], references: [id])
+  personName    String?
+  createdAt     DateTime     @default(now())
+
+  @@map("program_items")
+}
+
+model Setting {
+  id            String   @id @default(uuid())
+  key           String   @unique
+  valueEn       String
+  valueEs       String
+  updatedAt     DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ============================================================================
+// CEREMONY TEMPLATES - Plantillas para ceremonias especiales
+// Bodas, Funerales, Quinceañeras, Santa Cena, etc.
+// 
+// SCOPE SYSTEM:
+// - GLOBAL: Base Christian templates available to ALL organizations
+// - DENOMINATION: Templates specific to a denomination (SDA, Baptist, etc.)
+// - ORG_CUSTOM: Templates created by a specific organization
+// ============================================================================
+
+model CeremonyTemplate {
+  id            String   @id @default(cuid())
+  templateId    String   @unique @map("template_id")  // e.g., BODA_01, FUNERAL_01
+  category      String                                 // e.g., Ceremonies, Ordinances, Weekly
+  name          String                                 // Display name (English)
+  nameEs        String?  @map("name_es")              // Display name (Spanish)
+  description   String?
+  descriptionEs String?  @map("description_es")       // Description (Spanish)
+  variables     String[] @default([])                  // Array of variable names to collect
+  
+  // ============ SCOPE & DENOMINATION ============
+  scope         TemplateScope  @default(GLOBAL)        // GLOBAL, DENOMINATION, ORG_CUSTOM
+  denomination  Denomination   @default(CHRISTIAN)     // Which denomination this template is for
+  
+  // For ORG_CUSTOM templates only - links to the owning organization
+  organizationId  String?       @map("organization_id")
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  // ============ SOURCE TRACKING ============
+  // If this template was cloned from a global/denomination template
+  sourceTemplateId String?     @map("source_template_id")  
+  
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  sections      CeremonyTemplateSection[]
+  programs      CeremonyProgram[]
+
+  @@index([scope, denomination])
+  @@index([organizationId])
+  @@map("ceremony_templates")
+}
+
+model CeremonyTemplateSection {
+  id            String           @id @default(cuid())
+  templateId    String           @map("template_id")
+  template      CeremonyTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  order         Int
+  title         String
+  role          String?
+  durationMin   Int?             @map("duration_min")
+  optional      Boolean          @default(false)
+  notes         String?
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  @@index([templateId])
+  @@map("ceremony_template_sections")
+}
+
+model CeremonyProgram {
+  id              String            @id @default(cuid())
+  templateId      String            @map("template_id")
+  template        CeremonyTemplate  @relation(fields: [templateId], references: [id])
+  
+  // Multi-tenant isolation - Required
+  organizationId  String            @map("organization_id")
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdById     String            @map("created_by_id")
+  createdBy       User              @relation(fields: [createdById], references: [id])
+  
+  // JSON storage for filled variables
+  variables       Json              @default("{}")
+  
+  // Custom overrides per section
+  sectionOverrides Json             @default("[]") @map("section_overrides")
+  
+  date            DateTime          @db.Date
+  status          String            @default("draft")  // draft, ready, completed
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@index([templateId])
+  @@index([organizationId])
+  @@map("ceremony_programs")
+}
