@@ -32,6 +32,15 @@ export async function POST(
     }
 
     const variables = program.variables as Record<string, string>;
+    type CeremonySection = {
+      order: number;
+      optional: boolean | null;
+      title: string;
+      role: string | null;
+      notes: string | null;
+      durationMin: number | null;
+    };
+    const sections = program.template.sections as CeremonySection[];
     const churchName = program.organization?.nameEn || 'Your Church Name';
     const dateFormatted = new Date(program.date).toLocaleDateString('es-ES', {
       weekday: 'long',
@@ -41,7 +50,10 @@ export async function POST(
     });
 
     // Calculate total duration
-    const totalDuration = program.template.sections.reduce((sum, s) => sum + (s.durationMin || 0), 0);
+    const totalDuration = sections.reduce(
+      (sum: number, s: CeremonySection) => sum + (s.durationMin ?? 0),
+      0
+    );
 
     // Generate HTML for the PDF
     const htmlContent = `
@@ -236,7 +248,7 @@ export async function POST(
 
         <div class="sections-title">Orden del Programa</div>
         
-        ${program.template.sections.map(section => `
+        ${sections.map((section: CeremonySection) => `
           <div class="section-item ${section.optional ? 'optional' : ''}">
             <div class="section-number">${section.order}</div>
             <div class="section-content">

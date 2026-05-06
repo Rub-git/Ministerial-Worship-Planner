@@ -5,7 +5,6 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { mapDenominationToEnum } from '@/lib/template-library';
-import { Denomination } from '@prisma/client';
 
 // GET: List ceremony templates available to the user's organization
 // Filters by: GLOBAL + matching DENOMINATION + ORG_CUSTOM
@@ -21,7 +20,7 @@ export async function GET() {
     const isSuperAdmin = (session.user as any).role === 'SUPER_ADMIN';
 
     // Get user's organization denomination
-    let orgDenomination: Denomination = 'CHRISTIAN';
+    let orgDenomination: ReturnType<typeof mapDenominationToEnum> = 'CHRISTIAN';
     if (userOrgId) {
       const org = await prisma.organization.findUnique({
         where: { id: userOrgId },
@@ -56,21 +55,22 @@ export async function GET() {
       },
       orderBy: [{ scope: 'asc' }, { category: 'asc' }, { name: 'asc' }],
     });
+    type CeremonyTemplateWithSections = (typeof templates)[number];
 
     // Group by category for UI
-    const grouped = templates.reduce((acc, template) => {
+    const grouped = templates.reduce((acc: Record<string, CeremonyTemplateWithSections[]>, template: CeremonyTemplateWithSections) => {
       if (!acc[template.category]) {
         acc[template.category] = [];
       }
       acc[template.category].push(template);
       return acc;
-    }, {} as Record<string, typeof templates>);
+    }, {} as Record<string, CeremonyTemplateWithSections[]>);
 
     // Also return counts by scope
     const scopeCounts = {
-      global: templates.filter(t => t.scope === 'GLOBAL').length,
-      denomination: templates.filter(t => t.scope === 'DENOMINATION').length,
-      custom: templates.filter(t => t.scope === 'ORG_CUSTOM').length,
+      global: templates.filter((t: CeremonyTemplateWithSections) => t.scope === 'GLOBAL').length,
+      denomination: templates.filter((t: CeremonyTemplateWithSections) => t.scope === 'DENOMINATION').length,
+      custom: templates.filter((t: CeremonyTemplateWithSections) => t.scope === 'ORG_CUSTOM').length,
     };
 
     return NextResponse.json({ 
